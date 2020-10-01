@@ -43,8 +43,10 @@ function pmpromm_shortcode( $atts ){
 
 	$notice = apply_filters( 'pmpromm_default_map_notice', __( 'This map could not be loaded. Please ensure that you have entered your Google Maps API Key and that there are no JavaScript errors on the page.', 'pmpro-membership-maps' ) );
 
+	$start = apply_filters( 'pmpromm_load_markers_start', 0, $levels, $marker_attributes );
+	$limit = apply_filters( 'pmpromm_load_markers_limit', 100, $levels, $marker_attributes );
 	//Get the marker data
-	$marker_data = pmpromm_load_marker_data( $levels, $marker_attributes);
+	$marker_data = pmpromm_load_marker_data( $levels, $marker_attributes, $start, $limit );
 
 	$api_key = pmpro_getOption( 'pmpromm_api_key' );
 
@@ -96,9 +98,11 @@ function pmpromm_load_marker_data( $levels = false, $marker_attributes = array()
 	LEFT JOIN $wpdb->usermeta uml ON uml.meta_key = 'last_name' AND u.ID = uml.user_id 
 	LEFT JOIN $wpdb->usermeta umlat ON umlat.meta_key = 'pmpro_lat' AND u.ID = umlat.user_id 
 	LEFT JOIN $wpdb->usermeta umlng ON umlng.meta_key = 'pmpro_lng' AND u.ID = umlng.user_id 
-	LEFT JOIN $wpdb->usermeta um ON u.ID = um.user_id LEFT JOIN $wpdb->pmpro_memberships_users mu ON u.ID = mu.user_id LEFT JOIN $wpdb->pmpro_membership_levels m ON mu.membership_id = m.id ";
+	LEFT JOIN $wpdb->usermeta um ON u.ID = um.user_id 
+	LEFT JOIN $wpdb->pmpro_memberships_users mu ON u.ID = mu.user_id 
+	LEFT JOIN $wpdb->pmpro_membership_levels m ON mu.membership_id = m.id ";
 
-	$sql_parts['WHERE'] = "WHERE mu.status = 'active' AND (umh.meta_value IS NULL OR umh.meta_value <> '1') AND mu.membership_id > 0 ";
+	$sql_parts['WHERE'] = "WHERE mu.status = 'active' AND (umh.meta_value IS NULL OR umh.meta_value <> '1') AND mu.membership_id > 0 AND umlat.meta_value IS NOT NULL ";
 
 	$sql_parts['GROUP'] = "GROUP BY u.ID ";
 
@@ -225,6 +229,10 @@ function pmpromm_build_markers( $members, $marker_attributes ){
 	if( !empty( $members ) ){
 		foreach( $members as $member ){
 			$member_array = array();
+
+			if( empty( $member['lat'] ) || empty( $member['lng'] ) ){
+				continue;
+			}
 
 			$member_array['ID'] = $member['ID'];
 			$member_array['marker_meta']['lat'] = $member['lat'];
@@ -421,6 +429,12 @@ function pmpromm_advanced_settings_field( $fields ) {
 		'label' => __( 'Google Maps API Key', 'pmpro-membership-maps' ),
 		'description' => __( 'Used by the Membership Maps Add On.', 'pmpro-membership-maps')
 	);
+
+	if( defined( 'PMPRO_VERSION' ) ){
+		if( version_compare( PMPRO_VERSION, '2.4.2', '>=' ) ){
+			$fields['pmpromm_api_key']['description'] = sprintf( __( 'Used by the Membership Maps Add On. %s', 'pmpro-membership-maps' ), '<a href="https://www.paidmembershipspro.com/add-ons/membership-maps/#google-maps-api-key" target="_BLANK">'.__( 'Obtain Your Google Maps API Key', 'pmpro-membership-maps' ).'</a>' );
+		}
+	}
 
 	return $fields;
 }
