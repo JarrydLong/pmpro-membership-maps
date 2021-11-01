@@ -3,7 +3,7 @@
  * Plugin Name: Paid Memberships Pro - Membership Maps Add On
  * Plugin URI: https://www.paidmembershipspro.com/add-ons/membership-maps/
  * Description: Display a map of members or for a single member's profile.
- * Version: 0.2
+ * Version: 0.3
  * Author: Paid Memberships Pro
  * Author URI: https://www.paidmembershipspro.com
  * Text Domain: pmpro-membership-maps
@@ -236,7 +236,6 @@ function pmpromm_build_markers( $members, $marker_attributes ){
 		}
 	}
 
-	// var_dump($rh_fields);
 	$marker_array = array();
 
 	if( !empty( $members ) ){
@@ -545,9 +544,7 @@ function pmpromm_load_profile_map_marker( $sql_parts, $levels, $s, $pn, $limit, 
 		elseif(!empty($current_user->ID))
 			$pu = $current_user;
 		else
-			$pu = false;
-				
-		unset($sql_parts['GROUP']);
+			$pu = false;		
 
 		if( $pu ){
 
