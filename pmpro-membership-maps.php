@@ -3,7 +3,7 @@
  * Plugin Name: Paid Memberships Pro - Membership Maps Add On
  * Plugin URI: https://www.paidmembershipspro.com/add-ons/membership-maps/
  * Description: Display a map of members or for a single member's profile.
- * Version: 0.4
+ * Version: 0.5
  * Author: Paid Memberships Pro
  * Author URI: https://www.paidmembershipspro.com
  * Text Domain: pmpro-membership-maps
@@ -101,7 +101,7 @@ function pmpromm_load_marker_data( $levels = false, $marker_attributes = array()
 
 	$sql_parts = array();
 
-	$sql_parts['SELECT'] = "SELECT SQL_CALC_FOUND_ROWS u.ID, u.user_login, u.user_email, u.user_nicename, u.display_name, UNIX_TIMESTAMP(u.user_registered) as joindate, mu.membership_id, mu.initial_payment, mu.billing_amount, mu.cycle_period, mu.cycle_number, mu.billing_limit, mu.trial_amount, mu.trial_limit, UNIX_TIMESTAMP(mu.startdate) as startdate, UNIX_TIMESTAMP(mu.enddate) as enddate, m.name as membership, umf.meta_value as first_name, uml.meta_value as last_name, umlat.meta_value as lat, umlng.meta_value as lng FROM $wpdb->users u ";
+	$sql_parts['SELECT'] = "SELECT SQL_CALC_FOUND_ROWS u.ID, u.user_login, u.user_email, u.user_nicename, u.display_name, u.user_url, UNIX_TIMESTAMP(u.user_registered) as joindate, mu.membership_id, mu.initial_payment, mu.billing_amount, mu.cycle_period, mu.cycle_number, mu.billing_limit, mu.trial_amount, mu.trial_limit, UNIX_TIMESTAMP(mu.startdate) as startdate, UNIX_TIMESTAMP(mu.enddate) as enddate, m.name as membership, umf.meta_value as first_name, uml.meta_value as last_name, umlat.meta_value as lat, umlng.meta_value as lng FROM $wpdb->users u ";
 
 	$sql_parts['JOIN'] = "
 	LEFT JOIN $wpdb->usermeta umh ON umh.meta_key = 'pmpromd_hide_directory' AND u.ID = umh.user_id 
@@ -252,7 +252,6 @@ function pmpromm_build_markers( $members, $marker_attributes ){
 
 			$member['meta'] = get_user_meta( $member['ID'] );
 
-
 			if( !empty( $pmpro_pages['profile'] ) ) {
 				$profile_url = apply_filters( 'pmpromm_profile_url', get_permalink( $pmpro_pages['profile'] ) );
 			}
@@ -325,10 +324,14 @@ function pmpromm_build_markers( $members, $marker_attributes ){
 						break;
 					}
 
-					if( !empty( $member['meta'][$field[1]] ) ){
+					if( !empty( $member['meta'][$field[1]] ) || !empty( $member[$field[1]] ) ){
 
 						$current_field_key = $field[0];
-						$current_field_val = reset( $member['meta'][$field[1]] );
+						if( isset( $member['meta'][$field[1]] ) ) {
+							$current_field_val = reset( $member['meta'][$field[1]] );
+						} else {
+							$current_field_val = $member[$field[1]];
+						}
 
 						$rhfield_content .= '<p class="'.pmpromm_get_element_class( 'pmpromm_'.$current_field_key ).'">';
 						if( is_array( $field ) && !empty( $field['filename'] ) ){
@@ -343,18 +346,26 @@ function pmpromm_build_markers( $members, $marker_attributes ){
 									$cf_field[$current_field_key] = $rh_fields[$field[1]][$current_field_val];
 								}
 							} else {
-								$cf_field[] = $current_field_val;
+								$current_field_val = maybe_unserialize( $current_field_val );
+								if( is_array( $current_field_val ) ) {
+									//Adds support for serialized fields (typically multiselect)
+									$cf_field[] = implode( ", ", $current_field_val );
+								} else {
+									// Check if the field is a valid URL and then try to make it clickable.
+									if ( wp_http_validate_url( $current_field_val ) ) {
+										$current_field_val = make_clickable( $current_field_val );
+									}
+									$cf_field[] = $current_field_val;	
+								}
 							}
-							$rhfield_content .= '<strong>'.$current_field_key.'</strong> ';
-							$rhfield_content .= implode(", ",$cf_field);
+							$rhfield_content .= '<strong>' . esc_html( $current_field_key ) . '</strong> ';
+							$rhfield_content .= wp_kses_post( implode( ', ', $cf_field ) );
 						} elseif ( !empty( $rh_fields[$field[1]] ) && is_array( $rh_fields[$field[1]] ) ) {
-							$rhfield_content .= '<strong>'.$current_field_val.'</strong>';
-							$rhfield_content .= $rh_fields[$field[1]][$current_field];
-						} elseif ( $field[1] == 'user_url' ){
-							$rhfield_content .= '<a href="'.$member[$field[1]].'" target="_blank">'.$field[0].'</a>';
+							$rhfield_content .= '<strong>' . esc_html( $current_field_val ) . '</strong>';
+							$rhfield_content .= wp_kses_post( $rh_fields[$field[1]][$current_field] );
 						} else {
-							$rhfield_content .= '<strong>'.$field[0].':</strong>';
-							$rhfield_content .= make_clickable($member[$field[1]]);
+							$rhfield_content .= '<strong>' . esc_html( $field[0] ) . ':</strong>';
+							$rhfield_content .= make_clickable( $member[$field[1]] );
 						}
 
 						$rhfield_content .= '</p>';
@@ -456,13 +467,96 @@ function pmpromm_advanced_settings_field( $fields ) {
 
 	if( defined( 'PMPRO_VERSION' ) ){
 		if( version_compare( PMPRO_VERSION, '2.4.2', '>=' ) ){
-			$fields['pmpromm_api_key']['description'] = sprintf( __( 'Used by the Membership Maps Add On. %s', 'pmpro-membership-maps' ), '<a href="https://www.paidmembershipspro.com/add-ons/membership-maps/#google-maps-api-key" target="_BLANK">'.__( 'Obtain Your Google Maps API Key', 'pmpro-membership-maps' ).'</a>' );
+			$fields['pmpromm_api_key']['description'] = sprintf( __( 'Used by the Membership Maps Add On. %s %s', 'pmpro-membership-maps' ), '<a href="https://www.paidmembershipspro.com/add-ons/membership-maps/#google-maps-api-key" target="_BLANK">' . __( 'Obtain Your Google Maps API Key', 'pmpro-membership-maps' ).'</a>', '<br/><code>' . __( 'API Key Status', 'pmpro-membership-maps' ).': ' . pmpro_getOption( 'pmpromm_api_key_status' ) ) . '</code>';
 		}
 	}
 
 	return $fields;
 }
 add_filter('pmpro_custom_advanced_settings','pmpromm_advanced_settings_field', 20);
+
+/**
+ * Test the API key upon saving the PMPro Advanced Settings.
+
+ * @return void
+ */
+function pmpromm_test_api_key() {
+
+	if( ! empty( $_REQUEST['pmpromm_api_key'] ) && current_user_can( 'manage_options' ) ) {
+
+		$current_key = pmpro_getOption( 'pmpromm_api_key' );
+
+		$new_key = trim( sanitize_text_field( $_REQUEST['pmpromm_api_key'] ) );
+
+		$api_key_status = pmpro_getOption( 'pmpromm_api_key_status' );
+
+		//API key differs or the status is not OK, let's test the key.
+		if ( $new_key !== $current_key || $api_key_status !== 'OK' ) {
+
+			/**
+			 * This is a sample address used to test if the API key entered works as expected. 
+			 */
+			$member_address = array(
+				'street' 	=> '1313 Disneyland Drive',
+				'city' 		=> 'Anaheim',
+				'state' 	=> 'CA',
+				'zip' 		=> '92802'
+			);
+			
+			add_filter( 'pmpromm_geocoding_api_key', 'pmpromm_use_api_key_on_save' );
+			$geocoded_result = pmpromm_geocode_address( $member_address, false, true );
+			
+			if( $geocoded_result->status == 'OK' ) {
+				pmpro_setOption( 'pmpromm_api_key_status', 'OK' );				
+			} else {
+				$status = sanitize_text_field( $geocoded_result->status . ' ' . $geocoded_result->error_message );
+				pmpro_setOption( 'pmpromm_api_key_status', $status );
+			}			
+				
+
+		}
+
+	}
+
+}
+add_action( 'admin_init', 'pmpromm_test_api_key' );
+
+/**
+ * Sets the geocoding API key to the $_REQUEST value instead of a stored value
+ * @param  string $api_key The current API Key
+ * @return string The API key found in the $_REQUEST var
+ */
+function pmpromm_use_api_key_on_save( $api_key ) {
+
+	if ( ! empty( $_REQUEST['pmpromm_api_key'] ) ) {
+		$api_key = trim( sanitize_text_field( $_REQUEST['pmpromm_api_key'] ) );
+	}
+
+	return $api_key;
+}
+
+/**
+ * Adds the API key status to site health
+ *
+ * @param array $fields The site health fields
+ */
+function pmpromm_sitehealth_information( $fields ) {
+
+	if( ! isset( $fields['pmpro'] ) ) {
+		return $fields;
+	}
+
+	$map_data = array( 'pmpromm-api-key-status' => array(
+		'label' => __( 'Membership Maps API Key Status', 'paid-memberships-pro' ),
+		'value' => esc_html( pmpro_getOption( 'pmpromm_api_key_status' ) ),
+	) );
+
+	$fields['pmpro']['fields'] = array_merge( $fields['pmpro']['fields'], $map_data );
+
+	return $fields;
+
+}
+add_filter( 'debug_information', 'pmpromm_sitehealth_information', 11, 1 );
 
 /*
 Function to add links to the plugin row meta
@@ -641,7 +735,7 @@ function pmpromm_get_element_class( $class, $element = null ){
 	return $class;
 }
 
-function pmpromm_geocode_address( $addr_array, $morder = false ){
+function pmpromm_geocode_address( $addr_array, $morder = false, $return_body = false ){
 
 	$address_string = implode( ", ", array_filter( $addr_array ) );
 
@@ -657,6 +751,10 @@ function pmpromm_geocode_address( $addr_array, $morder = false ){
 		$request_body = wp_remote_retrieve_body( $remote_request );
 
 		$request_body = json_decode( $request_body );
+
+		if( $return_body ) {
+			return $request_body;
+		}
 
 		if( !empty( $request_body->status ) && $request_body->status == 'OK' ){
 
@@ -737,3 +835,69 @@ function pmpromm_profile_url( $pu, $profile_url ) {
 	}		
 
 }
+
+/**
+ * Geocodebilling fields when saving/updating a user profile
+ *
+ * @since 0.5
+ */
+function pmpro_geocode_billing_address_fields_frontend( $user_id ){
+
+	if ( ! current_user_can( 'manage_options' ) ) {
+		return;
+	}
+
+	if ( !function_exists( 'pmpromm_geocode_address' ) ){
+		return;
+	}
+
+	if ( empty( $_REQUEST['pmpro_baddress1'] ) ) {
+		return;
+	}
+
+	// Get the address for each field.
+	$pmpro_baddress1 = ! empty( $_REQUEST['pmpro_baddress1'] ) ? sanitize_text_field( $_REQUEST['pmpro_baddress1'] ) : '';
+	$pmpro_baddress2 = ! empty( $_REQUEST['pmpro_baddress2'] ) ? sanitize_text_field( $_REQUEST['pmpro_baddress2'] ) : '';
+	$pmpro_bcity = ! empty( $_REQUEST['pmpro_bcity'] ) ? sanitize_text_field( $_REQUEST['pmpro_bcity'] ) : '';
+	$pmpro_bzipcode = ! empty( $_REQUEST['pmpro_bzipcode'] ) ? sanitize_text_field( $_REQUEST['pmpro_bzipcode'] ) : '';
+	$pmpro_bcountry = ! empty( $_REQUEST['pmpro_bcountry'] ) ? sanitize_text_field( $_REQUEST['pmpro_bcountry'] ) : '';
+
+	// If the first address is empty, bail.
+	if ( empty( $pmpro_baddress1 ) ) {
+		return;
+	}
+
+	$member_address = array(
+		'street' => $pmpro_baddress1 . ', ' . $pmpro_baddress2,
+		'city' => $pmpro_bcity,
+		'zip' => $pmpro_bzipcode,
+		'country' => $pmpro_bcountry
+	);
+
+	/**
+	 * The billing address fields used to geocode whenever the users profile is updated and billing fields are presented.
+	 * 
+	 * @param array $member_address The array containing the address to geocode. See example:
+	 * 
+	 * $member_address = array(
+	 *	'street' 	=> '1313 Disneyland Drive',
+	 *	'city' 		=> 'Anaheim',
+	 *	'state' 	=> 'CA',
+	 *	'zip' 		=> '92802',
+	 *	'country'	=> 'US'
+	 * );
+	 * 
+	 */
+	$member_address = apply_filters( 'pmpromm_profile_billing_address_fields', $member_address );
+
+	$coordinates = pmpromm_geocode_address( $member_address );
+
+	if ( is_array( $coordinates ) ) {
+		update_user_meta( $user_id, 'pmpro_lat', floatval( $coordinates['lat'] ) );
+		update_user_meta( $user_id, 'pmpro_lng', floatval( $coordinates['lng'] ) );
+	}
+
+}
+add_action( 'pmpro_personal_options_update', 'pmpro_geocode_billing_address_fields_frontend', 10, 1 );
+add_action( 'personal_options_update', 'pmpro_geocode_billing_address_fields_frontend', 10, 1 );
+add_action( 'edit_user_profile_update', 'pmpro_geocode_billing_address_fields_frontend', 10, 1 );
