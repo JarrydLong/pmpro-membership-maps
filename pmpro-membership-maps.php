@@ -3,7 +3,7 @@
  * Plugin Name: Paid Memberships Pro - Membership Maps Add On
  * Plugin URI: https://www.paidmembershipspro.com/add-ons/membership-maps/
  * Description: Display a map of members or for a single member's profile.
- * Version: 0.6
+ * Version: 0.7
  * Author: Paid Memberships Pro
  * Author URI: https://www.paidmembershipspro.com
  * Text Domain: pmpro-membership-maps
@@ -28,7 +28,8 @@ function pmpromm_shortcode( $atts ){
 		'show_level' 	=> true,
 		'show_startdate' => true,
 		'avatar_align' 	=> NULL,
-		'fields' 		=> NULL
+		'fields' 		=> NULL,
+		'limit' 		=> 100,
 	), $atts));
 
 	$marker_attributes = apply_filters( 'pmpromm_marker_attributes', array(
@@ -45,7 +46,8 @@ function pmpromm_shortcode( $atts ){
 	$notice = apply_filters( 'pmpromm_default_map_notice', __( 'This map could not be loaded. Please ensure that you have entered your Google Maps API Key and that there are no JavaScript errors on the page.', 'pmpro-membership-maps' ) );
 
 	$start = apply_filters( 'pmpromm_load_markers_start', 0, $levels, $marker_attributes );
-	$limit = apply_filters( 'pmpromm_load_markers_limit', 100, $levels, $marker_attributes );
+	$limit = apply_filters( 'pmpromm_load_markers_limit', $limit, $levels, $marker_attributes );
+
 	//Get the marker data
 	$marker_data = pmpromm_load_marker_data( $levels, $marker_attributes, $start, $limit );
 
@@ -635,7 +637,8 @@ function pmpromm_load_map_directory_page( $sqlQuery, $atts ){
 		'show_startdate' => $atts['show_startdate'] ,
 		'avatar_align' => $atts['avatar_align'] ,
 		'fields' => $atts['fields'],
-		'zoom' => isset( $atts['zoom'] ) ? $atts['zoom'] : '8'
+		'zoom' => isset( $atts['zoom'] ) ? $atts['zoom'] : '8',
+		'limit' => isset( $atts['limit'] ) ? $atts['limit'] : '100',
 	);
 
 	echo pmpromm_shortcode( $attributes );
@@ -928,3 +931,78 @@ function pmpro_geocode_billing_address_fields_frontend( $user_id ){
 add_action( 'pmpro_personal_options_update', 'pmpro_geocode_billing_address_fields_frontend', 10, 1 );
 add_action( 'personal_options_update', 'pmpro_geocode_billing_address_fields_frontend', 10, 1 );
 add_action( 'edit_user_profile_update', 'pmpro_geocode_billing_address_fields_frontend', 10, 1 );
+
+/**
+ * Strip the [pmpro_membership_maps] shortcode from content if the current user can't edit users.
+ *
+ * @since 0.7
+
+ * @param string|array $content The content to strip the shortcode from.
+ *                              If an array is passed in, all elements
+ *                              will be filtered recursively.
+ *                              Non-strings are ignored.
+ *
+ * @return mixed The content with the shortcode removed. Will be the same type as the input.
+ */
+function pmpromm_maybe_strip_shortcode( $content ) {
+	// If the user can edit users, we don't need to strip the shortcode.
+	if ( current_user_can( 'edit_users' ) ) {
+		return $content;
+	}
+
+	// If an array is passed in, filter all elements recursively.
+	if ( is_array( $content ) ) {
+		foreach ( $content as $key => $value ) {
+			$content[ $key ] = pmpromm_maybe_strip_shortcode( $value );
+		}
+		return $content;
+	}
+
+	// If we're not looking at a string, just return it.
+	if ( ! is_string( $content ) ) {
+		return $content;
+	}
+	
+	// Okay, we have a string, figure out the regex.
+	$shortcodeRegex = get_shortcode_regex( array( 'pmpro_membership_maps' ) );	
+
+	// Replace shortcode wrapped in block comments.
+	$blockWrapperPattern = "/<!-- wp:shortcode -->\s*$shortcodeRegex\s*<!-- \/wp:shortcode -->/s";
+	$content = preg_replace( $blockWrapperPattern, '', $content );
+
+	// Replace the shortcode by itself.
+	$shortcodePattern = "/$shortcodeRegex/";
+	$content = preg_replace( $shortcodePattern, '', $content );
+
+	return $content;
+}
+add_filter( 'content_save_pre', 'pmpromm_maybe_strip_shortcode' );
+add_filter( 'excerpt_save_pre', 'pmpromm_maybe_strip_shortcode' );
+add_filter( 'widget_update_callback', 'pmpromm_maybe_strip_shortcode' );
+
+/**
+ * Only allow those with the edit_users capability
+ * to use the pmpro_membership_maps shortcode in post_meta.
+ *
+ * @since 0.7
+ * @param int    $meta_id     ID of the meta data entry.
+ * @param int    $object_id   ID of the object the meta is attached to.
+ * @param string $meta_key    Meta key.
+ * @param mixed  $_meta_value Meta value.
+ * @return void
+ */
+function pmpromm_maybe_strip_shortcode_from_post_meta( $meta_id, $object_id, $meta_key, $_meta_value ) {
+	// Bail if the value is not a string or array.
+	if ( ! is_string( $_meta_value ) && ! is_array( $_meta_value ) ) {
+		return;
+	}
+
+	// Strip the shortcode from the meta value.
+	$stripped_value = pmpromm_maybe_strip_shortcode( $_meta_value );
+
+	// If there was a change, save our stripped version.
+	if ( $stripped_value !== $_meta_value ) {
+		update_post_meta( $object_id, $meta_key, $stripped_value );
+	}
+}
+add_action( 'updated_post_meta', 'pmpromm_maybe_strip_shortcode_from_post_meta', 10, 4 );
