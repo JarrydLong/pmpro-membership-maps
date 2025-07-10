@@ -6,6 +6,7 @@
  * @since 0.8
  */
 
+//If PMPro core is in active or the class doesn't exist, bail.
 if( ! class_exists( 'PMPro_Member_Edit_Panel' ) ) {
     return;
 }
