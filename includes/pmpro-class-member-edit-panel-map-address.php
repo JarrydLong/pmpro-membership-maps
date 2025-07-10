@@ -5,6 +5,11 @@
  *
  * @since 0.8
  */
+
+if( ! class_exists( 'PMPro_Member_Edit_Panel' ) ) {
+    return;
+}
+
 class PMPro_Member_Edit_Panel_Map_Address extends PMPro_Member_Edit_Panel {
 	/**
 	 * Set up the panel.
