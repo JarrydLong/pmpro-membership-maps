@@ -3,12 +3,14 @@
  * Plugin Name: Paid Memberships Pro - Membership Maps Add On
  * Plugin URI: https://www.paidmembershipspro.com/add-ons/membership-maps/
  * Description: Display a map of members or for a single member's profile.
- * Version: 0.8
+ * Version: 0.9
  * Author: Paid Memberships Pro
  * Author URI: https://www.paidmembershipspro.com
  * Text Domain: pmpro-membership-maps
  * Domain Path: /languages
  */
+
+define( 'PMPROMM_VERSION', '0.9' );
 
 //Includes the Member Edit Map Address Panel
 require_once( plugin_dir_path( __FILE__ ) . 'includes/pmpro-class-member-edit-panel-map-address.php' );
@@ -60,24 +62,38 @@ function pmpromm_shortcode( $atts ){
 
 	wp_enqueue_script( 'jquery' );
 
-	wp_enqueue_script( 'pmpro-membership-maps-google-maps', add_query_arg( array( 'key' => $api_key, 'libraries' => implode( ",", $libraries ), 'v' => '3', 'style' => trim( 
-			preg_replace( "/\s+/", "", str_replace( " ", "", apply_filters( 'pmpromm_map_styles', '', $map_id ) ) )
-		) ), 'https://maps.googleapis.com/maps/api/js' ) );
+	/**
+	 * Filter map styles
+	 *
+  	 * @param string $styles JSON string of map styles
+	 * @param string $map ID of the current map
+	 */
+	$map_styles = apply_filters( 'pmpromm_map_styles', '', $map_id );
 
-	wp_register_script( 'pmpro-membership-maps-javascript', plugins_url( 'js/user.js', __FILE__ ) );
+	//Remove spaces and new lines from the styles
+	$map_styles = trim( $map_styles );
+	$map_styles = str_replace( " ", "", $map_styles );
+	$map_styles = preg_replace( "/\n+/", "", $map_styles );
+	$map_styles = preg_replace( "/\s+/", "", $map_styles );
 
-	wp_enqueue_style( 'pmpro-membership-maps-styling', plugins_url( 'css/user.css', __FILE__ ) );
+    	$query_params = array( 
+		'key' => $api_key,
+		'callback' => 'pmpromm_init_map', 
+		'loading' => 'async', 
+		'libraries' => implode( ",", $libraries ), 
+		'v' => '3', 
+		'style' => $map_styles 
+    	);
+
+	wp_enqueue_script( 'pmpro-membership-maps-google-maps', add_query_arg( $query_params, 'https://maps.googleapis.com/maps/api/js' ), array(), PMPROMM_VERSION, array( 'strategy'  => 'async' ) );
+	wp_register_script( 'pmpro-membership-maps-javascript', plugins_url( 'js/user.js', __FILE__ ), array( 'jquery' ), PMPROMM_VERSION );
+
+	wp_enqueue_style( 'pmpro-membership-maps-styling', plugins_url( 'css/user.css', __FILE__ ), array(), PMPROMM_VERSION );
 
 	/**
 	 * Setup defaults for the map. We're passing through the map_id attribute
 	 * to allow developers to differentiate maps. 
 	 */
-
-	$map_styles = apply_filters( 'pmpromm_map_styles', '', $map_id );
-	$map_styles = str_replace( " ", "", $map_styles );
-	$map_styles = preg_replace( "/\n+/", "", $map_styles );
-	$map_styles = preg_replace( "/\s+/", "", $map_styles );
-
 	wp_localize_script( 'pmpro-membership-maps-javascript', 'pmpromm_vars', array(
 		'default_start' => apply_filters( 'pmpromm_default_map_start', array( 'lat' => -34.397, 'lng' => 150.644 ), $map_id ),
 		'override_first_marker_location' => apply_filters( 'pmpromm_override_first_marker', '__return_false', $map_id ),
@@ -92,14 +108,14 @@ function pmpromm_shortcode( $atts ){
 
 	wp_enqueue_script( 'pmpro-membership-maps-javascript' );
 
-	return "<div id='pmpromm_map' class='pmpromm_map pmpro_map_id_".$map_id."' style='height: ".$height."px; width: ".$width."%;'>".$notice."</div>";
+	return "<div id='pmpromm_map' class='pmpromm_map pmpro_map_id_" . esc_attr( $map_id ) . "' style='height: " . esc_attr( $height ) . "px; width: " . esc_attr( $width ) . "%;'>" . esc_html( $notice ) . "</div>";
 
 }
 add_shortcode( 'pmpro_membership_maps', 'pmpromm_shortcode' );
 
 /** Enqueue frontend scripts */
 function pmpromm_enqueue_scripts() {
-	wp_enqueue_script( 'pmpro-membership-maps-frontend', plugins_url( 'js/frontend.js', __FILE__ ) );
+	wp_enqueue_script( 'pmpro-membership-maps-frontend', plugins_url( 'js/frontend.js', __FILE__ ), array( 'jquery' ), PMPROMM_VERSION );
 }
 add_action( 'wp_enqueue_scripts', 'pmpromm_enqueue_scripts' );
 
@@ -140,7 +156,13 @@ function pmpromm_load_marker_data( $levels = false, $marker_attributes = array()
 
 	$sql_parts['LIMIT'] = "LIMIT $start, $limit";
 
-	if( $s ) {
+	//Add support for searches that come from the Member Directory as well as the default search.
+	if ( ! empty( $_REQUEST['ps'] )  ) {
+		$s = sanitize_text_field( $_REQUEST['ps'] );
+	}
+
+	// If a search string is passed in.
+	if ( $s ) {
 		$sql_parts['WHERE'] .= "AND (u.user_login LIKE '%" . esc_sql($s) . "%' OR u.user_email LIKE '%" . esc_sql($s) . "%' OR u.display_name LIKE '%" . esc_sql($s) . "%' OR um.meta_value LIKE '%" . esc_sql($s) . "%') ";
 	}
 
@@ -1057,47 +1079,42 @@ function pmpromm_save_pin_location_fields( $user_id = false ) {
  */
 function pmpromm_show_pin_location_fields( $user_id = false, $layout = 'div' ) {
 
+	$pin_location = $pmpromm_street = $pmpromm_city = $pmpromm_state = $pmpromm_zip = $pmpromm_country = '';
+	$pmpromm_optin = false;
+
     //No user ID provided, lets get the current user
-    if( ! $user_id ) {
-        
-        $user_id = get_current_user_id();
-
-        //Current user isn't logged in for some reason, bail
-        if( ! $user_id ) {
-            return;
-        }
-
+    if ( ! $user_id ) {        
+        $user_id = get_current_user_id();        
     }
 
-    $pin_location = get_user_meta( $user_id, 'pmpromm_pin_location', true );
+	// Get the meta.
+    if ( $user_id ) {
+        $pin_location = get_user_meta( $user_id, 'pmpromm_pin_location', true );
 
-    $pmpromm_street = isset( $pin_location['street'] ) ? $pin_location['street'] : '';
-    $pmpromm_city = isset( $pin_location['city'] ) ? $pin_location['city'] : '';
-    $pmpromm_state = isset( $pin_location['state'] ) ? $pin_location['state'] : '';
-    $pmpromm_zip = isset( $pin_location['zip'] ) ? $pin_location['zip'] : '';
-    $pmpromm_country = isset( $pin_location['country'] ) ? $pin_location['country'] : '';
-    $pmpromm_optin = isset( $pin_location['optin'] ) ? $pin_location['optin'] : false;
+        if ( ! empty( $pin_location ) ) {
+            $pmpromm_street = isset( $pin_location['street'] ) ? $pin_location['street'] : '';
+			$pmpromm_city = isset( $pin_location['city'] ) ? $pin_location['city'] : '';
+			$pmpromm_state = isset( $pin_location['state'] ) ? $pin_location['state'] : '';
+			$pmpromm_zip = isset( $pin_location['zip'] ) ? $pin_location['zip'] : '';
+			$pmpromm_country = isset( $pin_location['country'] ) ? $pin_location['country'] : '';
+			$pmpromm_optin = isset( $pin_location['optin'] ) ? $pin_location['optin'] : false;
+        } else {
+			// Add support for older versions of the plugin and default to the old address fields.
+            $pmpromm_old_lat = get_user_meta( $user_id, 'pmpro_lat', true );
+            $pmpromm_old_lng = get_user_meta( $user_id, 'pmpro_lng', true );
 
-    /**
-     * Adds support for the old billing fields
-     */
-    if ( empty( $pin_location ) ) {
-        //We haven't got saved an address, lets check if there's a valid old address available
-        $pmpromm_old_lat = get_user_meta( $user_id, 'pmpro_lat', true );
-        $pmpromm_old_lng = get_user_meta( $user_id, 'pmpro_lng', true );
-
-        if( ! empty( $pmpromm_old_lat ) && ! empty( $pmpromm_old_lng ) ){
-            $pmpromm_street = get_user_meta( $user_id, 'pmpro_baddress1', true ).' '.get_user_meta( $user_id, 'pmpro_baddress2', true );
-            $pmpromm_city = get_user_meta( $user_id, 'pmpro_bcity', true );
-            $pmpromm_state = get_user_meta( $user_id, 'pmpro_bstate', true );
-            $pmpromm_zip = get_user_meta( $user_id, 'pmpro_bzipcode', true );
-            $pmpromm_country = get_user_meta( $user_id, 'pmpro_bcountry', true );
-            $pmpromm_optin = true;
-        }
-        
+            if ( ! empty( $pmpromm_old_lat ) && ! empty( $pmpromm_old_lng ) ) {
+                $pmpromm_street = get_user_meta( $user_id, 'pmpro_baddress1', true ).' '.get_user_meta( $user_id, 'pmpro_baddress2', true );
+                $pmpromm_city = get_user_meta( $user_id, 'pmpro_bcity', true );
+                $pmpromm_state = get_user_meta( $user_id, 'pmpro_bstate', true );
+                $pmpromm_zip = get_user_meta( $user_id, 'pmpro_bzipcode', true );
+                $pmpromm_country = get_user_meta( $user_id, 'pmpro_bcountry', true );
+                $pmpromm_optin = true;
+            }   
+		}
     }
 
-    if( $layout == 'div' ) {
+    if ( $layout == 'div' ) {
         ?>
 		<fieldset id="pmpro_membership_maps_fields" class="<?php echo esc_attr( pmpro_get_element_class( 'pmpro_form_fieldset' ) ); ?>">
 			<div class="<?php echo esc_attr( pmpro_get_element_class( 'pmpro_card' ) ); ?>">
@@ -1134,11 +1151,11 @@ function pmpromm_show_pin_location_fields( $user_id = false, $layout = 'div' ) {
 							<select name="pmpromm_country" class="<?php echo esc_attr( pmpro_get_element_class( 'pmpro_form_input pmpro_form_input-select' ) ); ?>" id="pmpromm_country" class="<?php echo esc_attr( pmpro_get_element_class( 'pmpromm_country' ) ); ?>">
 							<?php
 								global $pmpro_countries, $pmpro_default_country;
-								if( ! $pmpromm_country) {
+								if ( ! $pmpromm_country ) {
 									$pmpromm_country = $pmpro_default_country;
 								}
-								foreach($pmpro_countries as $abbr => $country) { ?>
-									<option value="<?php echo esc_attr( $abbr ) ?>" <?php if($abbr == $pmpromm_country) { ?>selected="selected"<?php } ?>><?php echo esc_html( $country )?></option>
+								foreach ( $pmpro_countries as $abbr => $country ) { ?>
+									<option value="<?php echo esc_attr( $abbr ); ?>" <?php selected( $abbr, $pmpromm_country ); ?>><?php echo esc_html( $country ); ?></option>
 								<?php } ?>
 							</select>
 						</div>
